@@ -1,9 +1,16 @@
 package com.dragon.navigation;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.ImageFormat;
 import android.graphics.SurfaceTexture;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -17,6 +24,10 @@ import android.media.ImageReader;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.Message;
+import android.support.v4.app.ActivityCompat;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.util.Log;
 import android.util.Size;
 import android.util.SparseIntArray;
@@ -24,27 +35,38 @@ import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
 import android.view.Window;
+import android.view.animation.Animation;
+import android.view.animation.RotateAnimation;
+import android.widget.ArrayAdapter;
+import android.widget.AutoCompleteTextView;
+import android.widget.Button;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import com.amap.api.location.AMapLocation;
-import com.amap.api.location.AMapLocationClient;
-import com.amap.api.location.AMapLocationClientOption;
+import com.amap.api.services.core.LatLonPoint;
+import com.amap.api.services.help.Inputtips;
+import com.amap.api.services.help.InputtipsQuery;
+import com.amap.api.services.help.Tip;
+import com.dragon.navigation.util.AMapUtil;
+import com.dragon.navigation.util.MyTextView;
+import com.dragon.navigation.util.ToastUtil;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-
-
-
-
 /**
- * This file created by dragon on 2016/7/26 19:40,belong to com.dragon.navigation .
- * 摄像头相关操作文件
+ * This file created by dragon on 2016/7/26 19:40,belong to com.dragon.arnav.basicFuction.camera2 .
  */
-public class Main extends Activity {
+public class Main extends Activity implements View.OnClickListener,SensorEventListener,
+        TextWatcher,Inputtips.InputtipsListener {
     private static final String TAG="Main";
+    private ArPoiSearch mArPoiSearch;
+    private Location mLocation;
+
+//    private EditText editCity;
     private TextureView textureView;
     //用SparseIntArray来代替hashMap，进行性能优化。
     private static final SparseIntArray ORIENTATIONS = new SparseIntArray();
@@ -64,12 +86,32 @@ public class Main extends Activity {
     private ImageReader imageReader;
     private Handler mBackgroundHandler;
     private HandlerThread mBackgroundThread;
-    //    *****************************************************************
+//    *****************************************************************
+//    指南针
+    private ImageView imgZnz;
+//    搜素关键字
+    private AutoCompleteTextView mSearchText;
+//    当前城市，自定义控件，为了获取焦点
+    private MyTextView mCurrentCity;
+// 搜索
+    private TextView btnSearch;
+//    商家
+    private TextView mMerchant;
+    private Button btnMy;
+    // 要输入的poi搜索关键字
+    private String keyWord = "";
 
+//****************************************************************
+    float currentDegree = 0f;
+    SensorManager mSensorManager;
+    private Sensor accelerometer;//加速度传感器
+    private Sensor magnetic;//地磁传感器
 
-
-
-
+    private float[] accelerometerValues = new float[3];
+    private float[] magneticFieldValues = new float[3];
+//***********新建子线程更新UI**********************
+    private static final int UPDATE_TEXT = 1;
+    private Handler mUiHandler = new MyUiHandler();
     @Override
     public void onCreate(Bundle savedInstanceState){
         super.onCreate(savedInstanceState);
@@ -78,7 +120,61 @@ public class Main extends Activity {
         textureView = (TextureView) findViewById(R.id.texture);
         assert textureView != null;
         textureView.setSurfaceTextureListener(textureListener);
+//********************Location***************************
+        mCurrentCity=(MyTextView)findViewById(R.id.current_city);
+        LatLonPoint lp = new LatLonPoint(0,0);
+        mLocation = new Location(Main.this,savedInstanceState,mCurrentCity);
+        mLocation.initLoction();
 
+//        ToastUtil.show(Main.this,mLocation.getLp());
+//********************POI********************************
+
+
+
+//两个按键，搜索和我的监听
+        btnMy = (Button)findViewById(R.id.My);
+        btnMy.setOnClickListener(this);
+        btnSearch = (TextView)findViewById(R.id.btn_search);
+        btnSearch.setOnClickListener(this);
+
+
+//        ToastUtil.show(Main.this,mLocation.getLocationResult().getAddress());
+        imgZnz = (ImageView)findViewById(R.id.Compass);
+
+//        ****************************************************
+        mSensorManager = (SensorManager)getSystemService(SENSOR_SERVICE);
+//        List<Sensor> deviceSensors = mSensorManager.getSensorList(Sensor.TYPE_ALL);
+//        Log.e("dragon",deviceSensors+"");
+//        实例化加速度传感器
+        accelerometer = mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+//        实例化地磁传感器
+        magnetic = mSensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
+        calculateOrientation();
+//        *******************************************************
+        mSearchText = (AutoCompleteTextView) findViewById(R.id.searchText);
+        mSearchText.addTextChangedListener(this);// 添加文本输入框监听事件
+        mMerchant = (TextView)findViewById(R.id.merchant);
+//以下动态加载
+    }
+
+
+
+
+
+// 定义一个内部类继承自Handler，并且覆盖handleMessage方法用于处理子线程传过来的消息
+    class MyUiHandler extends Handler{
+        @Override
+        public void handleMessage(Message msg) {
+            super.handleMessage(msg);
+            switch (msg.what) {
+                case UPDATE_TEXT: // 接受到消息之后，对UI控件进行修改
+                    mMerchant.setText("商家：11");
+                    break;
+
+                default:
+                    break;
+            }
+        }
     }
 
 
@@ -102,6 +198,45 @@ public class Main extends Activity {
         }
     };
 
+    @Override
+    public void afterTextChanged(Editable s) {
+
+    }
+
+    @Override
+    public void beforeTextChanged(CharSequence s, int start, int count,
+                                  int after) {
+
+    }
+
+    @Override
+    public void onTextChanged(CharSequence s, int start, int before, int count) {
+        String newText = s.toString().trim();
+        if (!AMapUtil.IsEmptyOrNullString(newText)) {
+            InputtipsQuery inputquery = new InputtipsQuery(newText, "");
+            Inputtips inputTips = new Inputtips(Main.this, inputquery);
+            inputTips.setInputtipsListener(this);
+            inputTips.requestInputtipsAsyn();
+        }
+    }
+    @Override
+    public void onGetInputtips(List<Tip> tipList, int rCode) {
+        if (rCode == 1000) {// 正确返回
+            List<String> listString = new ArrayList<String>();
+            for (int i = 0; i < tipList.size(); i++) {
+                listString.add(tipList.get(i).getName());
+            }
+            ArrayAdapter<String> aAdapter = new ArrayAdapter<String>(
+                    getApplicationContext(),
+                    R.layout.route_inputs, listString);
+            mSearchText.setAdapter(aAdapter);
+            aAdapter.notifyDataSetChanged();
+        } else {
+            ToastUtil.showerror(this, rCode);
+        }
+
+    }
+
     private final CameraDevice.StateCallback stateCallback = new CameraDevice.StateCallback() {
         @Override
 //        摄像头打开激发该方法
@@ -109,7 +244,11 @@ public class Main extends Activity {
             Log.e(TAG, "onOpened");
             cameraDevice = camera;
 //            开始预览
-            createCameraPreview();
+            try{
+                createCameraPreview();
+            } catch (Exception e){
+                e.printStackTrace();
+            }
         }
         //        摄像头断开连接时的方法
         @Override
@@ -260,7 +399,10 @@ public class Main extends Activity {
             imageDimension = map.getOutputSizes(SurfaceTexture.class)[0];
 //            打开摄像头，第一个参数代表要打开的摄像头，第二个参数用于监测打开摄像头的当前状态，第三个参数表示执行callback的Handler,
 //            如果程序希望在当前线程中执行callback，像下面的设置为null即可。
-            manager.openCamera(cameraId, stateCallback, null);
+            if (ActivityCompat.checkSelfPermission(this,Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                manager.openCamera(cameraId, stateCallback, null);
+            }
+
         } catch (CameraAccessException e) {
             e.printStackTrace();
         }
@@ -291,6 +433,10 @@ public class Main extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        //        注册监听事件
+        mSensorManager.registerListener(Main.this,accelerometer,SensorManager.SENSOR_DELAY_GAME);
+        mSensorManager.registerListener(Main.this,magnetic,SensorManager.SENSOR_DELAY_GAME);
+        mLocation.onResume();
         Log.e(TAG, "onResume");
         startBackgroundThread();
         if (textureView.isAvailable()) {
@@ -304,9 +450,17 @@ public class Main extends Activity {
     @Override
     protected void onPause() {
         Log.e(TAG, "onPause");
+        mSensorManager.unregisterListener(this);
         closeCamera();
         stopBackgroundThread();
         super.onPause();
+        mLocation.onPause();
+        mLocation.deactivate();
+    }
+    @Override
+    protected void onStop(){
+        mSensorManager.unregisterListener(this);
+        super.onStop();
     }
 
 
@@ -316,11 +470,99 @@ public class Main extends Activity {
     @Override
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
+        mLocation.onSaveInstanceState(outState);
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        mLocation.onDestroy();
     }
+
+
+    private float calculateOrientation(){
+//        SensorManager mSensorMgr = (SensorManager) mContext.getSystemService(Context.SENSOR_SERVICE);
+//        HandlerThread mHandlerThread = new HandlerThread("sensorThread");
+//        mHandlerThread.start();
+//        Handler handler = new Handler(mHandlerThread.getLooper());
+//        mSensorMgr.registerListener(this, mSensorMgr.getDefaultSensor(Sensor.TYPE_ACCELEROMETER),
+//                SensorManager.SENSOR_DELAY_FASTEST, handler);
+        float[] values = new float[3];
+        float[] R = new float[9];
+        SensorManager.getRotationMatrix(R, null, accelerometerValues,
+                magneticFieldValues);
+        SensorManager.getOrientation(R, values);
+        values[0] = (float) Math.toDegrees(values[0]);
+        return values[0];
+    }
+    @Override
+    public void onSensorChanged(SensorEvent event){
+        if (event.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
+            accelerometerValues = event.values;
+        }
+        if (event.sensor.getType() == Sensor.TYPE_MAGNETIC_FIELD) {
+            magneticFieldValues = event.values;
+        }
+        float degree = calculateOrientation();
+        RotateAnimation ra = new RotateAnimation(currentDegree,-degree, Animation.RELATIVE_TO_SELF,0.5f,
+                Animation.RELATIVE_TO_SELF,0.5f);
+
+//        int rotation = getWindowManager().getDefaultDisplay().getRotation();
+//        imgZnz.setRotate(ORIENTATIONS.get(rotation),50,50);
+        ra.setDuration(200);
+        imgZnz.startAnimation(ra);
+        currentDegree=-degree;
+    }
+    @Override
+    public void onAccuracyChanged(Sensor sensor,int accuracy){
+
+    }
+
+    //    检测搜索关键字是否为空，不为空就开始搜索
+    public void searchButton() {
+        keyWord = AMapUtil.checkEditText(mSearchText);
+        if ("".equals(keyWord)) {
+            ToastUtil.show(this, "请输入搜索关键字");
+            return;
+        } else {
+//            默认搜索范围是深圳市，为空是全国
+            final LinearLayout lin = (LinearLayout) findViewById(R.id.list_Lin);
+            mArPoiSearch = new ArPoiSearch(this,keyWord,"","深圳市",lin);
+            mArPoiSearch.doSearch();
+        }
+    }
+
+
+
+//    检测所有按键
+@Override
+public void onClick(View v)
+{
+    switch (v.getId())
+    {
+        case R.id.btn_search:
+//            ToastUtil.show(Main.this,"搜索");
+            searchButton();
+//            更新UI
+            new Thread(new Runnable() {
+                @Override
+                public void run() { //　新建一个线程，并新建一个Message的对象，是用Handler的对象发送这个Message
+                    Message msg = new Message();
+                    msg.what = UPDATE_TEXT; // 用户自定义的一个值，用于标识不同类型的消息
+                    mUiHandler.sendMessage(msg); // 发送消息
+                }
+            }).start();
+            break;
+        case R.id.My:
+//            ToastUtil.show(Main.this,"我的");
+            Intent intent = new Intent(Main.this,MySetting.class);
+            startActivity(intent);
+//            Toast.makeText(Main.this, "我的", Toast.LENGTH_SHORT).show();
+            break;
+    }
+}
+
+
+
 
 }
